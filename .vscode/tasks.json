@@ -1,0 +1,50 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Build ESP32 firmware",
+			"type": "shell",
+			"command": "C:\\Users\\Zhu\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Rebuild ESP32 firmware",
+			"type": "shell",
+			"command": "C:\\Users\\Zhu\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Final ESP32 rebuild",
+			"type": "shell",
+			"command": "C:\\Users\\Zhu\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Build with TX diagnostics",
+			"type": "shell",
+			"command": "C:\\Users\\Zhu\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Build with MAVLink library",
+			"type": "shell",
+			"command": "C:\\Users\\Zhu\\.platformio\\penv\\Scripts\\platformio.exe",
+			"args": [
+				"run"
+			],
+			"isBackground": false
+		}
+	]
+}
