@@ -66,4 +66,32 @@ static const char EMBEDDED_VTXTABLE[] PROGMEM = R"json({
     }
 })json";
 
+// Additional embedded VTX table: RUSHFPV 1G3 4W
+static const char EMBEDDED_RUSH_VTXTABLE[] PROGMEM = R"json({
+    "description": "RUSHFPV 1G3 4W VTX table (Betaflight format)",
+    "version": "1.0",
+    "vtx_table": {
+        "bands_list": [
+            {
+                "name": "BAND-A",
+                "letter": "A",
+                "is_factory_band": false,
+                "frequencies": [1080,1120,1160,1200,1240,1280,1320,1360]
+            },
+            {
+                "name": "BAND-B",
+                "letter": "B",
+                "is_factory_band": false,
+                "frequencies": [1200,1220,1240,1258,1280,1300,1320,1340]
+            }
+        ],
+        "powerlevels_list": [
+            {"value": 25, "label": "25 "},
+            {"value": 200, "label": "200"},
+            {"value": 1000, "label": "1  "},
+            {"value": 4000, "label": "4  "}
+        ]
+    }
+})json";
+
 #endif // EMBEDDED_VTXTABLE_H

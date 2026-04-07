@@ -17,7 +17,7 @@ static bool storageValidateVtxTableDocument(JsonVariantConst root, String* error
 
     JsonArrayConst bands = vtxTable["bands_list"].as<JsonArrayConst>();
     JsonArrayConst powers = vtxTable["powerlevels_list"].as<JsonArrayConst>();
-    if (bands.isNull() || bands.isNull() || bands.size() == 0) {
+    if (bands.isNull() || powers.isNull() || bands.size() == 0) {
         if (errorMessage) {
             *errorMessage = "missing bands_list";
         }
@@ -124,17 +124,30 @@ bool storageBegin() {
 }
 
 bool storageEnsureVtxFile(const char* path) {
+    const char* embedded = nullptr;
+    if (!path) return false;
+    // match known embedded table paths
+    if (strcmp(path, DEFAULT_VTX_TABLE_PATH) == 0 || strcmp(path, "/peak_thor_t35.json") == 0) {
+        embedded = EMBEDDED_VTXTABLE;
+    } else if (strcmp(path, "/RUSHFPV-1G3_4W.json") == 0 || strcmp(path, "/RUSHFPV-1G3_4W_newest VTX.json") == 0) {
+        embedded = EMBEDDED_RUSH_VTXTABLE;
+    }
+
+    if (embedded == nullptr) {
+        // No embedded content known for this path; nothing to ensure.
+        return LittleFS.exists(path);
+    }
+
     if (LittleFS.exists(path)) {
         String existing;
-        if (storageReadTextFile(path, existing) && existing == String(EMBEDDED_VTXTABLE)) {
+        if (storageReadTextFile(path, existing) && existing == String(embedded)) {
             return true;
         }
     }
 
     File f = LittleFS.open(path, "w");
     if (!f) return false;
-    // EMBEDDED_VTXTABLE is a PROGMEM C-string
-    f.print(EMBEDDED_VTXTABLE);
+    f.print(embedded);
     f.close();
     return true;
 }
@@ -275,6 +288,7 @@ void storageListVtxFiles(JsonArray array) {
         }
         entry = root.openNextFile();
     }
+    root.close();
 }
 
 bool storageLoadAppConfig(AppConfig* config) {
@@ -313,6 +327,9 @@ bool storageLoadAppConfig(AppConfig* config) {
             device.enabled = deviceObject["enabled"] | device.enabled;
             device.mavlinkNodeId = deviceObject["mavlinkNodeId"] | config->localNodeId;
             device.mavlinkDeviceId = deviceObject["mavlinkDeviceId"] | device.mavlinkDeviceId;
+            device.manualBand = deviceObject["manualBand"] | device.manualBand;
+            device.manualChannel = deviceObject["manualChannel"] | device.manualChannel;
+            device.manualPowerIndex = deviceObject["manualPowerIndex"] | device.manualPowerIndex;
             const char* vtxTablePath = deviceObject["vtxTablePath"] | legacyPath;
             strncpy(device.vtxTablePath, vtxTablePath, sizeof(device.vtxTablePath) - 1);
             device.vtxTablePath[sizeof(device.vtxTablePath) - 1] = '\0';
@@ -352,6 +369,9 @@ bool storageSaveAppConfig(const AppConfig& config) {
         deviceObject["enabled"] = device.enabled;
         deviceObject["mavlinkNodeId"] = device.mavlinkNodeId;
         deviceObject["mavlinkDeviceId"] = device.mavlinkDeviceId;
+        deviceObject["manualBand"] = device.manualBand;
+        deviceObject["manualChannel"] = device.manualChannel;
+        deviceObject["manualPowerIndex"] = device.manualPowerIndex;
         deviceObject["vtxTablePath"] = device.vtxTablePath;
     }
 

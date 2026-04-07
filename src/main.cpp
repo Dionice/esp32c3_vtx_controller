@@ -111,6 +111,7 @@ static unsigned long lastMavlinkStatusTextMs = 0;
 static unsigned long lastWirelessHealthCheckMs = 0;
 static unsigned long wifiDisableAtMs = 0;
 static bool wifiDisabled = false;
+static int lastSoftApStationCount = 0;
 static mavlink_message_t mavlinkRxMessage = {};
 static mavlink_status_t mavlinkRxStatus = {};
 static String uploadPath;
@@ -120,7 +121,7 @@ static bool uploadOk = false;
 
 static bool loadDeviceVtxTable(uint8_t deviceIndex, String* message = nullptr);
 static size_t getBandCount(uint8_t deviceIndex);
-static size_t getChannelCount();
+static size_t getChannelCount(uint8_t deviceIndex);
 static size_t getPowerCount(uint8_t deviceIndex);
 static uint16_t getFrequencyForSelection(uint8_t deviceIndex, size_t bandIndex, size_t channelIndex);
 static uint8_t getPowerValueForIndex(uint8_t deviceIndex, size_t powerIndex);
@@ -410,7 +411,7 @@ static bool jsonArrayContainsString(JsonArray array, const char* value) {
 }
 
 static bool isValidGpio(uint8_t pin) {
-    return pin <= 21 && pin != 2;
+    return pin <= 21;
 }
 
 static uint8_t clampManualBandValue(uint8_t deviceIndex, uint8_t value) {
@@ -421,8 +422,8 @@ static uint8_t clampManualBandValue(uint8_t deviceIndex, uint8_t value) {
     return static_cast<uint8_t>(constrain(static_cast<int>(value), 1, static_cast<int>(bandCount)));
 }
 
-static uint8_t clampManualChannelValue(uint8_t value) {
-    const size_t channelCount = getChannelCount();
+static uint8_t clampManualChannelValue(uint8_t deviceIndex, uint8_t value) {
+    const size_t channelCount = getChannelCount(deviceIndex);
     if (channelCount == 0) {
         return 1;
     }
@@ -446,7 +447,7 @@ static void sanitizeDeviceSelections() {
     for (uint8_t index = 0; index < config.deviceCount; index++) {
         VtxDeviceConfig& device = config.devices[index];
         device.manualBand = clampManualBandValue(index, device.manualBand);
-        device.manualChannel = clampManualChannelValue(device.manualChannel);
+        device.manualChannel = clampManualChannelValue(index, device.manualChannel);
         device.manualPowerIndex = clampManualPowerIndexValue(index, device.manualPowerIndex);
         device.mavlinkNodeId = sanitizeMavlinkNodeId(device.mavlinkNodeId, config.localNodeId);
         device.mavlinkDeviceId = sanitizeMavlinkDeviceId(device.mavlinkDeviceId, static_cast<uint8_t>(index + 1));
@@ -472,7 +473,7 @@ static void appendControlOptionsJson(uint8_t deviceIndex, JsonObject deviceObjec
     deviceObject["manualPowerIndex"] = device.manualPowerIndex;
     deviceObject["mavlinkNodeId"] = device.mavlinkNodeId;
     deviceObject["mavlinkDeviceId"] = device.mavlinkDeviceId;
-    deviceObject["channelCount"] = getChannelCount();
+    deviceObject["channelCount"] = getChannelCount(deviceIndex);
 
     JsonArray bandOptions = deviceObject.createNestedArray("bandOptions");
     const size_t bandCount = getBandCount(deviceIndex);
@@ -482,7 +483,7 @@ static void appendControlOptionsJson(uint8_t deviceIndex, JsonObject deviceObjec
         option["label"] = getBandLabelForIndex(deviceIndex, bandIndex);
         option["frequency"] = getFrequencyForSelection(deviceIndex, bandIndex, 0);
         JsonArray frequencies = option.createNestedArray("frequencies");
-        const size_t channelCount = getChannelCount();
+        const size_t channelCount = getChannelCount(deviceIndex);
         for (size_t channelIndex = 0; channelIndex < channelCount; channelIndex++) {
             frequencies.add(getFrequencyForSelection(deviceIndex, bandIndex, channelIndex));
         }
@@ -557,7 +558,17 @@ static size_t getBandCount(uint8_t deviceIndex) {
     return sizeof(kDefaultBands) / sizeof(kDefaultBands[0]);
 }
 
-static size_t getChannelCount() {
+static size_t getChannelCount(uint8_t deviceIndex) {
+    DynamicJsonDocument* doc = getDeviceVtxDoc(deviceIndex);
+    if (doc) {
+        JsonArray bands = (*doc)["vtx_table"]["bands_list"].as<JsonArray>();
+        if (!bands.isNull() && bands.size() > 0) {
+            JsonArray freqs = bands[0]["frequencies"].as<JsonArray>();
+            if (!freqs.isNull() && freqs.size() > 0) {
+                return freqs.size();
+            }
+        }
+    }
     return sizeof(kDefaultChannels) / sizeof(kDefaultChannels[0]);
 }
 
@@ -724,12 +735,20 @@ static void appendSelectionStateJson(uint8_t deviceIndex, JsonObject deviceObjec
     }
 
     const uint32_t bandCount = getBandCount(deviceIndex);
-    const uint32_t channelCount = getChannelCount();
+    const uint32_t channelCount = getChannelCount(deviceIndex);
     const uint32_t powerCount = getPowerCount(deviceIndex);
     if (bandCount == 0 || channelCount == 0 || powerCount == 0 ||
         state.currentBandIndex >= bandCount ||
         state.currentChannelIndex >= channelCount ||
         state.currentPowerIndex >= powerCount) {
+        deviceObject["band"] = nullptr;
+        deviceObject["bandLabel"] = nullptr;
+        deviceObject["channel"] = nullptr;
+        deviceObject["powerIndex"] = nullptr;
+        deviceObject["powerValue"] = nullptr;
+        deviceObject["powerLabel"] = nullptr;
+        deviceObject["frequency"] = nullptr;
+        deviceObject["pitMode"] = nullptr;
         return;
     }
 
@@ -950,13 +969,27 @@ static void selectTransportForDevice(const VtxDeviceConfig& device) {
 
     Serial1.end();
     trampResetState();
-    if (device.protocol == VTX_PROTOCOL_SMARTAUDIO) {
-        trampSetOneWirePin(-1);
-        smartaudioSetPrependZero(true);
-        smartaudioSetOneWirePin(device.vtxControlPin);
-    } else {
-        smartaudioSetOneWirePin(-1);
-        trampSetOneWirePin(device.vtxControlPin);
+    // Clear any existing one-wire pins by default.
+    trampSetOneWirePin(-1);
+    smartaudioSetOneWirePin(-1);
+    smartaudioSetPrependZero(true);
+
+    // If the device uses PWM/bitbang control modes, configure the
+    // appropriate one-wire pin. For serial control mode we'll use
+    // the hardware UART (Serial1) and avoid configuring one-wire.
+    if (device.controlMode != VTX_CONTROL_MODE_SERIAL) {
+        if (device.protocol == VTX_PROTOCOL_SMARTAUDIO) {
+            smartaudioSetOneWirePin(device.vtxControlPin);
+        } else {
+            trampSetOneWirePin(device.vtxControlPin);
+        }
+    }
+
+    // Initialize Serial1 only for devices configured for serial control
+    // and when a valid GPIO is provided. Use 115200 as a safe default
+    // for SmartAudio-style serial traffic. rx pin is unused for TX-only use.
+    if (device.controlMode == VTX_CONTROL_MODE_SERIAL && isValidGpio(device.vtxControlPin)) {
+        Serial1.begin(115200, SERIAL_8N1, -1, device.vtxControlPin);
     }
 
     activeTransportProtocol = device.protocol;
@@ -1058,7 +1091,7 @@ static void processDevicePulse(uint8_t deviceIndex, uint16_t pulse) {
     }
 
     const uint32_t bandCount = getBandCount(deviceIndex);
-    const uint32_t channelCount = getChannelCount();
+    const uint32_t channelCount = getChannelCount(deviceIndex);
     const uint32_t powerCount = getPowerCount(deviceIndex);
     const uint32_t total = bandCount * channelCount * powerCount;
     if (total == 0) {
@@ -1115,7 +1148,7 @@ static bool applyMavlinkCommandLocally(const MavlinkVtxCommand& command) {
         }
 
         const uint8_t band = command.band == 0 ? device.manualBand : clampManualBandValue(index, command.band);
-        const uint8_t channel = command.channel == 0 ? device.manualChannel : clampManualChannelValue(command.channel);
+        const uint8_t channel = command.channel == 0 ? device.manualChannel : clampManualChannelValue(index, command.channel);
         const uint8_t powerIndex = resolveMavlinkPowerIndex(index, device, command);
 
         device.manualBand = band;
@@ -1248,7 +1281,7 @@ static bool forwardMavlinkCommandOverEspNow(const MavlinkVtxCommand& command) {
     doc["deviceId"] = command.deviceId;
     doc["band"] = command.band;
     doc["channel"] = command.channel;
-    doc["powerIndex"] = command.powerValue;
+    doc["powerValue"] = command.powerValue;
     doc["flags"] = command.flags;
     return sendEspNowJson(ESPNOW_BROADCAST_ADDRESS, doc);
 }
@@ -1674,7 +1707,7 @@ static void handleEspNowData(uint8_t* address, uint8_t* data, uint8_t len, signe
         mavlinkCommand.deviceId = doc["deviceId"] | 0;
         mavlinkCommand.band = doc["band"] | 0;
         mavlinkCommand.channel = doc["channel"] | 0;
-        mavlinkCommand.powerValue = doc["powerIndex"] | MAVLINK_VTX_KEEP_VALUE;
+        mavlinkCommand.powerValue = doc["powerValue"] | MAVLINK_VTX_KEEP_VALUE;
         mavlinkCommand.flags = doc["flags"] | 0;
         mavlinkDebug.espNowRxCount++;
         mavlinkDebug.lastCommandAtMs = millis();
@@ -1731,20 +1764,34 @@ static void handleApiControl() {
         if (!device.enabled) {
             response["ok"] = false;
             response["message"] = "device is disabled";
-        } else if (device.controlMode != VTX_CONTROL_MODE_SERIAL) {
-            response["ok"] = false;
-            response["message"] = "device is not in serial control mode";
         } else {
+            // Save the requested manual selection regardless of control mode.
             device.manualBand = clampManualBandValue(static_cast<uint8_t>(deviceIndex), static_cast<uint8_t>(server.arg("band").toInt()));
-            device.manualChannel = clampManualChannelValue(static_cast<uint8_t>(server.arg("channel").toInt()));
+            device.manualChannel = clampManualChannelValue(static_cast<uint8_t>(deviceIndex), static_cast<uint8_t>(server.arg("channel").toInt()));
             device.manualPowerIndex = clampManualPowerIndexValue(static_cast<uint8_t>(deviceIndex), static_cast<uint8_t>(server.arg("power").toInt()));
-            const bool ok = applyVtxSelectionToDevice(
-                static_cast<uint8_t>(deviceIndex),
-                static_cast<size_t>(device.manualBand - 1),
-                static_cast<size_t>(device.manualChannel - 1),
-                static_cast<size_t>(device.manualPowerIndex));
-            response["ok"] = ok;
-            response["message"] = ok ? "manual control applied" : "failed to apply manual control";
+            storageSaveAppConfig(config);
+
+            if (device.controlMode == VTX_CONTROL_MODE_SERIAL) {
+                const bool ok = applyVtxSelectionToDevice(
+                    static_cast<uint8_t>(deviceIndex),
+                    static_cast<size_t>(device.manualBand - 1),
+                    static_cast<size_t>(device.manualChannel - 1),
+                    static_cast<size_t>(device.manualPowerIndex));
+                response["ok"] = ok;
+                response["message"] = ok ? "manual control applied" : "failed to apply manual control";
+            } else if (device.controlMode == VTX_CONTROL_MODE_MAVLINK) {
+                const bool queued = queueMavlinkSelectionForDevice(
+                    static_cast<uint8_t>(deviceIndex),
+                    static_cast<size_t>(device.manualBand - 1),
+                    static_cast<size_t>(device.manualChannel - 1),
+                    static_cast<size_t>(device.manualPowerIndex));
+                response["ok"] = queued;
+                response["message"] = queued ? "queued MAVLink selection" : "failed to queue MAVLink selection";
+            } else {
+                // PWM or other modes: just save the selection, do not send.
+                response["ok"] = true;
+                response["message"] = "config saved (no serial send in current control mode)";
+            }
         }
     }
 
@@ -1755,13 +1802,13 @@ static void handleApiControl() {
 
 static void handleApiConfig() {
     DynamicJsonDocument input(4096);
-    input["wifiChannel"] = server.arg("wifiChannel").toInt();
-    input["espNowEnabled"] = server.arg("espNowEnabled") == "1";
-    input["boardRole"] = server.arg("boardRole");
-    input["localNodeId"] = server.arg("localNodeId").toInt();
-    input["mavlinkRxPin"] = server.arg("mavlinkRxPin").toInt();
-    input["mavlinkTxPin"] = server.arg("mavlinkTxPin").toInt();
-    input["mavlinkBaud"] = server.arg("mavlinkBaud").toInt();
+    if (server.hasArg("wifiChannel")) input["wifiChannel"] = server.arg("wifiChannel").toInt();
+    if (server.hasArg("espNowEnabled")) input["espNowEnabled"] = server.arg("espNowEnabled") == "1";
+    if (server.hasArg("boardRole")) input["boardRole"] = server.arg("boardRole");
+    if (server.hasArg("localNodeId")) input["localNodeId"] = server.arg("localNodeId").toInt();
+    if (server.hasArg("mavlinkRxPin")) input["mavlinkRxPin"] = server.arg("mavlinkRxPin").toInt();
+    if (server.hasArg("mavlinkTxPin")) input["mavlinkTxPin"] = server.arg("mavlinkTxPin").toInt();
+    if (server.hasArg("mavlinkBaud")) input["mavlinkBaud"] = server.arg("mavlinkBaud").toInt();
 
     const String devicesJson = server.arg("devicesJson");
     if (devicesJson.length() > 0) {
@@ -1890,9 +1937,7 @@ static void handleUploadChunk() {
         }
     } else if (upload.status == UPLOAD_FILE_WRITE) {
         if (uploadError.length() == 0) {
-            for (size_t i = 0; i < upload.currentSize; i++) {
-                uploadBuffer += static_cast<char>(upload.buf[i]);
-            }
+            uploadBuffer.concat(reinterpret_cast<const char*>(upload.buf), upload.currentSize);
         }
     } else if (upload.status == UPLOAD_FILE_END) {
         if (uploadError.length() == 0) {
@@ -1972,7 +2017,15 @@ static void resetWirelessStackForAp() {
 }
 
 static bool startSoftApOnChannel(uint8_t channel) {
-    const bool started = WiFi.softAP(kApSsid, kApPassword, channel);
+    // Build SSID by appending last 3 bytes of the MAC (no colons) to the base SSID.
+    String mac = WiFi.macAddress();
+    mac.replace(":", "");
+    String suffix = mac;
+    if (mac.length() >= 6) {
+        suffix = mac.substring(mac.length() - 6);
+    }
+    String ssid = String(kApSsid) + "-" + suffix;
+    const bool started = WiFi.softAP(ssid.c_str(), kApPassword, channel);
     delay(200);
     return started && isWirelessApHealthy();
 }
@@ -2003,7 +2056,7 @@ static void initializeWireless() {
 
     Serial.printf("softAP start=%u ssid=%s channel=%u ip=%s\n",
                   apStarted ? 1 : 0,
-                  kApSsid,
+                  WiFi.softAPSSID().c_str(),
                   static_cast<unsigned>(apChannel),
                   WiFi.softAPIP().toString().c_str());
 
@@ -2022,7 +2075,7 @@ static void initializeWireless() {
             apStarted = startSoftApOnChannel(apChannel);
             Serial.printf("softAP restore after ESP-NOW=%u ssid=%s channel=%u ip=%s\n",
                           apStarted ? 1 : 0,
-                          kApSsid,
+                          WiFi.softAPSSID().c_str(),
                           static_cast<unsigned>(apChannel),
                           WiFi.softAPIP().toString().c_str());
         } else {
@@ -2033,9 +2086,11 @@ static void initializeWireless() {
 
     lastWirelessHealthCheckMs = millis();
 
-    // Set timer to disable Wi-Fi after 2 minutes
-    wifiDisableAtMs = millis() + 2UL * 60UL * 1000UL;
+    // Set timer to disable Wi-Fi after 1 minute
+    wifiDisableAtMs = millis() + 1UL * 60UL * 1000UL;
     wifiDisabled = false;
+    // initialize station count tracking
+    lastSoftApStationCount = WiFi.softAPgetStationNum();
 }
 
 static void initializeMavlinkSerial() {
@@ -2083,12 +2138,31 @@ void setup() {
 
 void loop() {
     server.handleClient();
-    if (!wifiDisabled && wifiDisableAtMs > 0 && millis() >= wifiDisableAtMs) {
-        Serial.println("Disabling Wi-Fi AP and ESP-NOW after 2 minutes");
-        WiFi.softAPdisconnect(true);
-        WiFi.mode(WIFI_OFF);
-        espNowActive = false;
-        wifiDisabled = true;
+    // Track connected stations: hold AP while any client is connected.
+    if (!wifiDisabled) {
+        const int stationCount = WiFi.softAPgetStationNum();
+        if (stationCount > 0) {
+            // A client is connected — keep the AP active indefinitely while clients remain.
+            if (wifiDisableAtMs != 0) {
+                Serial.println("Client connected: holding AP (auto-disable paused)");
+                wifiDisableAtMs = 0;
+            }
+        } else {
+            // No clients connected. If previously there were clients, schedule AP stop in 10s.
+            if (lastSoftApStationCount > 0) {
+                wifiDisableAtMs = millis() + 10UL * 1000UL;
+                Serial.println("All clients disconnected: will stop AP in 10s");
+            }
+        }
+        lastSoftApStationCount = stationCount;
+
+        if (wifiDisableAtMs > 0 && millis() >= wifiDisableAtMs) {
+            Serial.println("Disabling Wi-Fi AP and ESP-NOW (auto timer expired)");
+            WiFi.softAPdisconnect(true);
+            WiFi.mode(WIFI_OFF);
+            espNowActive = false;
+            wifiDisabled = true;
+        }
     }
 
     if (config.boardRole == BOARD_ROLE_FC_BRIDGE && millis() - lastMavlinkHeartbeatMs >= kMavlinkHeartbeatIntervalMs) {

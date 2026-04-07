@@ -51,10 +51,13 @@ struct AppConfig {
 
 static inline void appConfigSetDefaultDevice(VtxDeviceConfig& device, uint8_t index) {
     snprintf(device.name, sizeof(device.name), "VTX %u", static_cast<unsigned>(index + 1));
-    device.pwmInputPin = static_cast<uint8_t>(3 + index);
-    device.vtxControlPin = static_cast<uint8_t>(4 + index);
+    // Use safe default pins for ESP32-S3 (avoid flash and boot pins).
+    // PWM inputs start at GPIO13, VTX control pins start at GPIO14.
+    // Default to no PWM input and use VTX control pin 2 for MAVLink/serial control.
+    device.pwmInputPin = static_cast<int8_t>(-1);
+    device.vtxControlPin = static_cast<uint8_t>(2);
     device.protocol = VTX_PROTOCOL_SMARTAUDIO;
-    device.controlMode = VTX_CONTROL_MODE_PWM;
+    device.controlMode = VTX_CONTROL_MODE_MAVLINK;
     device.enabled = (index == 0);
     device.manualBand = 1;
     device.manualChannel = 1;
@@ -68,10 +71,12 @@ static inline void appConfigSetDefaultDevice(VtxDeviceConfig& device, uint8_t in
 static inline void appConfigSetDefaults(AppConfig& config) {
     config.wifiChannel = 1;
     config.espNowEnabled = false;
-    config.boardRole = BOARD_ROLE_STANDALONE;
+    // Default to FC bridge role with MAVLink pins set.
+    config.boardRole = BOARD_ROLE_FC_BRIDGE;
     config.localNodeId = 1;
-    config.mavlinkRxPin = 5;
-    config.mavlinkTxPin = 6;
+    // Set default MAVLink RX/TX pins to 3/4.
+    config.mavlinkRxPin = static_cast<int8_t>(3);
+    config.mavlinkTxPin = static_cast<int8_t>(4);
     config.mavlinkBaud = 57600;
     config.deviceCount = 1;
     for (uint8_t index = 0; index < MAX_VTX_DEVICES; index++) {

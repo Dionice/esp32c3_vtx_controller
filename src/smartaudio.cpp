@@ -188,10 +188,18 @@ static bool sa_read_bitbang_frame(uint8_t *frame, size_t *frameLen, uint32_t wai
         if (!sa_read_bitbang_byte(remainingUs, &firstByte)) {
             return false;
         }
-        if (firstByte == 0xAA) {
+        if (firstByte != 0xAA) {
+            continue;
+        }
+        uint8_t syncSecond = 0;
+        if (!sa_read_bitbang_byte(SA_BITBANG_INTERBYTE_TIMEOUT_US, &syncSecond)) {
+            return false;
+        }
+        if (syncSecond == 0x55) {
             foundStart = true;
             break;
         }
+        // Not a valid sync pair; loop continues searching from next byte
     }
 
     if (!foundStart) {
@@ -199,7 +207,8 @@ static bool sa_read_bitbang_frame(uint8_t *frame, size_t *frameLen, uint32_t wai
     }
 
     frame[0] = 0xAA;
-    for (size_t index = 1; index < 4; index++) {
+    frame[1] = 0x55;
+    for (size_t index = 2; index < 4; index++) {
         uint8_t byte = 0;
         if (!sa_read_bitbang_byte(SA_BITBANG_INTERBYTE_TIMEOUT_US, &byte)) {
             return false;
