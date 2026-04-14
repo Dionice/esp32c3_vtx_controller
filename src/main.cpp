@@ -124,7 +124,7 @@ static size_t getBandCount(uint8_t deviceIndex);
 static size_t getChannelCount(uint8_t deviceIndex);
 static size_t getPowerCount(uint8_t deviceIndex);
 static uint16_t getFrequencyForSelection(uint8_t deviceIndex, size_t bandIndex, size_t channelIndex);
-static uint8_t getPowerValueForIndex(uint8_t deviceIndex, size_t powerIndex);
+static uint16_t getPowerValueForIndex(uint8_t deviceIndex, size_t powerIndex);
 static String getBandLabelForIndex(uint8_t deviceIndex, size_t bandIndex);
 static String getPowerLabelForIndex(uint8_t deviceIndex, size_t powerIndex);
 static uint16_t getTransmitPowerValueForDevice(uint8_t deviceIndex, uint8_t protocol, size_t powerIndex);
@@ -600,12 +600,12 @@ static uint16_t getFrequencyForSelection(uint8_t deviceIndex, size_t bandIndex, 
     return 0;
 }
 
-static uint8_t getPowerValueForIndex(uint8_t deviceIndex, size_t powerIndex) {
+static uint16_t getPowerValueForIndex(uint8_t deviceIndex, size_t powerIndex) {
     DynamicJsonDocument* doc = getDeviceVtxDoc(deviceIndex);
     if (doc) {
         JsonArray levels = (*doc)["vtx_table"]["powerlevels_list"].as<JsonArray>();
         if (!levels.isNull() && powerIndex < levels.size()) {
-            return levels[powerIndex]["value"] | 0;
+            return static_cast<uint16_t>(levels[powerIndex]["value"] | 0);
         }
     }
     if (powerIndex < (sizeof(kDefaultPowerValues) / sizeof(kDefaultPowerValues[0]))) {
@@ -684,13 +684,8 @@ static String getPowerLabelForIndex(uint8_t deviceIndex, size_t powerIndex) {
 }
 
 static uint16_t getTransmitPowerValueForDevice(uint8_t deviceIndex, uint8_t protocol, size_t powerIndex) {
-    const uint16_t rawValue = getPowerValueForIndex(deviceIndex, powerIndex);
-    if (protocol != VTX_PROTOCOL_TRAMP) {
-        return rawValue;
-    }
-
-    const uint16_t labelValue = parsePowerLabelMilliwatts(getPowerLabelForIndex(deviceIndex, powerIndex));
-    return labelValue > 0 ? labelValue : rawValue;
+    (void)protocol;
+    return getPowerValueForIndex(deviceIndex, powerIndex);
 }
 
 static uint8_t resolveMavlinkPowerIndex(uint8_t deviceIndex, const VtxDeviceConfig& device, const MavlinkVtxCommand& command) {
@@ -974,22 +969,10 @@ static void selectTransportForDevice(const VtxDeviceConfig& device) {
     smartaudioSetOneWirePin(-1);
     smartaudioSetPrependZero(true);
 
-    // If the device uses PWM/bitbang control modes, configure the
-    // appropriate one-wire pin. For serial control mode we'll use
-    // the hardware UART (Serial1) and avoid configuring one-wire.
-    if (device.controlMode != VTX_CONTROL_MODE_SERIAL) {
-        if (device.protocol == VTX_PROTOCOL_SMARTAUDIO) {
-            smartaudioSetOneWirePin(device.vtxControlPin);
-        } else {
-            trampSetOneWirePin(device.vtxControlPin);
-        }
-    }
-
-    // Initialize Serial1 only for devices configured for serial control
-    // and when a valid GPIO is provided. Use 115200 as a safe default
-    // for SmartAudio-style serial traffic. rx pin is unused for TX-only use.
-    if (device.controlMode == VTX_CONTROL_MODE_SERIAL && isValidGpio(device.vtxControlPin)) {
-        Serial1.begin(115200, SERIAL_8N1, -1, device.vtxControlPin);
+    if (device.protocol == VTX_PROTOCOL_SMARTAUDIO) {
+        smartaudioSetOneWirePin(device.vtxControlPin);
+    } else {
+        trampSetOneWirePin(device.vtxControlPin);
     }
 
     activeTransportProtocol = device.protocol;
@@ -1771,15 +1754,7 @@ static void handleApiControl() {
             device.manualPowerIndex = clampManualPowerIndexValue(static_cast<uint8_t>(deviceIndex), static_cast<uint8_t>(server.arg("power").toInt()));
             storageSaveAppConfig(config);
 
-            if (device.controlMode == VTX_CONTROL_MODE_SERIAL) {
-                const bool ok = applyVtxSelectionToDevice(
-                    static_cast<uint8_t>(deviceIndex),
-                    static_cast<size_t>(device.manualBand - 1),
-                    static_cast<size_t>(device.manualChannel - 1),
-                    static_cast<size_t>(device.manualPowerIndex));
-                response["ok"] = ok;
-                response["message"] = ok ? "manual control applied" : "failed to apply manual control";
-            } else if (device.controlMode == VTX_CONTROL_MODE_MAVLINK) {
+            if (device.controlMode == VTX_CONTROL_MODE_MAVLINK) {
                 const bool queued = queueMavlinkSelectionForDevice(
                     static_cast<uint8_t>(deviceIndex),
                     static_cast<size_t>(device.manualBand - 1),
@@ -1788,9 +1763,9 @@ static void handleApiControl() {
                 response["ok"] = queued;
                 response["message"] = queued ? "queued MAVLink selection" : "failed to queue MAVLink selection";
             } else {
-                // PWM or other modes: just save the selection, do not send.
+                // PWM mode: just save the selection, do not send.
                 response["ok"] = true;
-                response["message"] = "config saved (no serial send in current control mode)";
+                response["message"] = "config saved";
             }
         }
     }
@@ -2169,10 +2144,10 @@ void loop() {
         lastMavlinkHeartbeatMs = millis();
         sendMavlinkHeartbeat();
     }
-    if (config.boardRole == BOARD_ROLE_FC_BRIDGE && millis() - lastMavlinkStatusTextMs >= kMavlinkStatusTextIntervalMs) {
-        lastMavlinkStatusTextMs = millis();
-        sendMavlinkStatusText();
-    }
+    // if (config.boardRole == BOARD_ROLE_FC_BRIDGE && millis() - lastMavlinkStatusTextMs >= kMavlinkStatusTextIntervalMs) {
+    //     lastMavlinkStatusTextMs = millis();
+    //     sendMavlinkStatusText();
+    // }
     processMavlinkInput();
     for (uint8_t index = 0; index < config.deviceCount; index++) {
         if (!config.devices[index].enabled) {

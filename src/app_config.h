@@ -12,8 +12,7 @@ enum VtxProtocol : uint8_t {
 
 enum VtxControlMode : uint8_t {
     VTX_CONTROL_MODE_PWM = 0,
-    VTX_CONTROL_MODE_SERIAL = 1,
-    VTX_CONTROL_MODE_MAVLINK = 2,
+    VTX_CONTROL_MODE_MAVLINK = 1,
 };
 
 enum BoardRole : uint8_t {
@@ -53,7 +52,7 @@ static inline void appConfigSetDefaultDevice(VtxDeviceConfig& device, uint8_t in
     snprintf(device.name, sizeof(device.name), "VTX %u", static_cast<unsigned>(index + 1));
     // Use safe default pins for ESP32-S3 (avoid flash and boot pins).
     // PWM inputs start at GPIO13, VTX control pins start at GPIO14.
-    // Default to no PWM input and use VTX control pin 2 for MAVLink/serial control.
+    // Default to no PWM input and use VTX control pin 2 for MAVLink control.
     device.pwmInputPin = static_cast<int8_t>(-1);
     device.vtxControlPin = static_cast<uint8_t>(2);
     device.protocol = VTX_PROTOCOL_SMARTAUDIO;
@@ -120,8 +119,6 @@ static inline const char* appConfigControlModeToString(uint8_t controlMode) {
     switch (controlMode) {
         case VTX_CONTROL_MODE_MAVLINK:
             return "mavlink";
-        case VTX_CONTROL_MODE_SERIAL:
-            return "serial";
         case VTX_CONTROL_MODE_PWM:
         default:
             return "pwm";
@@ -134,10 +131,6 @@ static inline bool appConfigControlModeFromString(const String& input, uint8_t& 
     normalized.toLowerCase();
     if (normalized == "pwm") {
         controlMode = VTX_CONTROL_MODE_PWM;
-        return true;
-    }
-    if (normalized == "serial") {
-        controlMode = VTX_CONTROL_MODE_SERIAL;
         return true;
     }
     if (normalized == "mavlink") {

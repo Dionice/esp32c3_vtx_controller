@@ -374,7 +374,7 @@ static const char WEB_UI_HTML[] PROGMEM = R"html(
       // Protocol
       rows.push(`<tr><td><strong>Протокол</strong></td>${devicesState.map((d, i) => buildCell(i, `<select class="protocol-input" data-device="${i}"><option value="smartaudio" ${d.protocol === 'smartaudio' ? 'selected' : ''}>SmartAudio</option><option value="tramp" ${d.protocol === 'tramp' ? 'selected' : ''}>TRAMP</option></select>`)).join('')}</tr>`);
       // Control Mode
-      rows.push(`<tr><td><strong>Режим</strong></td>${devicesState.map((d, i) => buildCell(i, `<select class="controlmode-input" data-device="${i}"><option value="pwm" ${d.controlMode === 'pwm' ? 'selected' : ''}>PWM</option><option value="serial" ${d.controlMode === 'serial' ? 'selected' : ''}>Серійний</option><option value="mavlink" ${d.controlMode === 'mavlink' ? 'selected' : ''}>MAVLink</option></select>`)).join('')}</tr>`);
+      rows.push(`<tr><td><strong>Режим</strong></td>${devicesState.map((d, i) => buildCell(i, `<select class="controlmode-input" data-device="${i}"><option value="pwm" ${d.controlMode === 'pwm' ? 'selected' : ''}>PWM</option><option value="mavlink" ${d.controlMode === 'mavlink' ? 'selected' : ''}>MAVLink</option></select>`)).join('')}</tr>`);
       // Per-VTX addressing inside the bridge command payload
       rows.push(`<tr><td><strong>VTX Node ID</strong></td>${devicesState.map((d, i) => buildCell(i, `<input class="mavlink-node-input" data-device="${i}" type="number" min="1" max="254" value="${d.mavlinkNodeId}">`)).join('')}</tr>`);
       rows.push(`<tr><td><strong>VTX Device ID</strong></td>${devicesState.map((d, i) => buildCell(i, `<input class="mavlink-device-input" data-device="${i}" type="number" min="1" max="254" value="${d.mavlinkDeviceId}">`)).join('')}</tr>`);
@@ -385,7 +385,7 @@ static const char WEB_UI_HTML[] PROGMEM = R"html(
       // Requested band
       rows.push(`<tr><td><strong>Запитуваний Band</strong></td>${devicesState.map((d, i) => {
         const bandOpts = (d.bandOptions || []).map((o) => `<option value="${o.value}" ${Number(d.manualBand) === Number(o.value) ? 'selected' : ''}>${o.label || o.value}</option>`).join('');
-        const enabled = d.enabled && d.activeControlMode === 'serial' && !restartPending;
+        const enabled = false;
         return buildCell(i, `<select data-role="manual-band" class="manual-band" data-device="${i}" ${enabled ? '' : 'disabled'}>${bandOpts}</select>`);
       }).join('')}</tr>`);
       // Requested channel
@@ -397,13 +397,13 @@ static const char WEB_UI_HTML[] PROGMEM = R"html(
           const label = freq > 0 ? `${val} (${freq})` : `${val}`;
           return `<option value="${val}" ${Number(d.manualChannel) === val ? 'selected' : ''}>${label}</option>`;
         }).join('');
-        const enabled = d.enabled && d.activeControlMode === 'serial' && !restartPending;
+        const enabled = false;
         return buildCell(i, `<select data-role="manual-channel" class="manual-channel" data-device="${i}" ${enabled ? '' : 'disabled'}>${chOpts}</select>`);
       }).join('')}</tr>`);
       // Requested power
       rows.push(`<tr><td><strong>Запитувана Power</strong></td>${devicesState.map((d, i) => {
         const pOpts = (d.powerOptions || []).map((opt) => `<option value="${opt.value}" ${Number(d.manualPowerIndex) === Number(opt.value) ? 'selected' : ''}>${opt.label || opt.powerValue || opt.value}</option>`).join('');
-        const enabled = d.enabled && d.activeControlMode === 'serial' && !restartPending;
+        const enabled = false;
         return buildCell(i, `<select data-role="manual-power" class="manual-power" data-device="${i}" ${enabled ? '' : 'disabled'}>${pOpts}</select>`);
       }).join('')}</tr>`);
       // Applied state
